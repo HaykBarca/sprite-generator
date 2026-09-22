@@ -76,11 +76,12 @@ function encodeFrame(
   const imgData = ctx.getImageData(0, 0, width, height);
   const data = imgData.data;
 
-  // Simple median cut or frequency color quantization to 255 colors + 1 transparent
-  const palette: [number, number, number][] = [];
-  const colorMap = new Map<number, number>();
+  // Frequency-weighted median-cut quantization to 255 colors + 1 transparent.
+  // Building the palette globally (rather than greedily assigning slots in
+  // scan order) avoids scan-order-dependent color drift on frames with more
+  // than 255 distinct colors (gradients, anti-aliasing, shading).
   const transparentIndex = 0;
-  palette.push([0, 0, 0]); // transparent placeholder
+  const { palette, colorToIndex } = buildPalette(data);
 
   const indexedPixels = new Uint8Array(width * height);
 
@@ -93,36 +94,8 @@ function encodeFrame(
       continue;
     }
 
-    // Quantize 8-bit to 5-bit for palette reduction (32 levels per channel)
-    const r = data[i] & 0xf8;
-    const g = data[i + 1] & 0xf8;
-    const b = data[i + 2] & 0xf8;
-    const key = (r << 16) | (g << 8) | b;
-
-    let index = colorMap.get(key);
-    if (index === undefined) {
-      if (palette.length < 256) {
-        index = palette.length;
-        palette.push([data[i], data[i + 1], data[i + 2]]);
-        colorMap.set(key, index);
-      } else {
-        // Find nearest color in existing palette
-        let minDist = Infinity;
-        let bestIdx = 1;
-        for (let p = 1; p < palette.length; p++) {
-          const dr = data[i] - palette[p][0];
-          const dg = data[i + 1] - palette[p][1];
-          const db = data[i + 2] - palette[p][2];
-          const dist = dr * dr + dg * dg + db * db;
-          if (dist < minDist) {
-            minDist = dist;
-            bestIdx = p;
-          }
-        }
-        index = bestIdx;
-      }
-    }
-    indexedPixels[pixelIdx] = index;
+    const key = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+    indexedPixels[pixelIdx] = colorToIndex.get(key)!;
   }
 
   // Pad palette to power of 2 (up to 256)
@@ -166,6 +139,122 @@ function encodeFrame(
   writeByte(0); // Sub-block terminator
 }
 
+interface ColorBox {
+  r: number;
+  g: number;
+  b: number;
+  count: number;
+}
+
+/**
+ * Builds a 255-color palette (index 0 reserved for transparency) from the
+ * frame's opaque pixels using frequency-weighted median-cut quantization,
+ * and a lookup from exact RGB key to palette index for every color present.
+ */
+function buildPalette(data: Uint8ClampedArray): {
+  palette: [number, number, number][];
+  colorToIndex: Map<number, number>;
+} {
+  const maxColors = 255;
+
+  const freq = new Map<number, number>();
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    const key = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+    freq.set(key, (freq.get(key) || 0) + 1);
+  }
+
+  const colors: ColorBox[] = [];
+  freq.forEach((count, key) => {
+    colors.push({ r: (key >> 16) & 0xff, g: (key >> 8) & 0xff, b: key & 0xff, count });
+  });
+
+  const boxes: ColorBox[][] =
+    colors.length <= maxColors ? colors.map((c) => [c]) : medianCut(colors, maxColors);
+
+  const palette: [number, number, number][] = [[0, 0, 0]]; // index 0 = transparent placeholder
+  const colorToIndex = new Map<number, number>();
+
+  for (const box of boxes) {
+    let totalR = 0;
+    let totalG = 0;
+    let totalB = 0;
+    let totalCount = 0;
+    for (const c of box) {
+      totalR += c.r * c.count;
+      totalG += c.g * c.count;
+      totalB += c.b * c.count;
+      totalCount += c.count;
+    }
+    const avgR = Math.round(totalR / totalCount);
+    const avgG = Math.round(totalG / totalCount);
+    const avgB = Math.round(totalB / totalCount);
+
+    const index = palette.length;
+    palette.push([avgR, avgG, avgB]);
+    for (const c of box) {
+      colorToIndex.set((c.r << 16) | (c.g << 8) | c.b, index);
+    }
+  }
+
+  return { palette, colorToIndex };
+}
+
+/** Recursively splits color boxes along their widest channel until maxBoxes is reached. */
+function medianCut(colors: ColorBox[], maxBoxes: number): ColorBox[][] {
+  const boxes: ColorBox[][] = [colors];
+
+  while (boxes.length < maxBoxes) {
+    let splitIdx = -1;
+    let splitPopulation = -1;
+    for (let i = 0; i < boxes.length; i++) {
+      if (boxes[i].length <= 1) continue;
+      const population = boxes[i].reduce((s, c) => s + c.count, 0);
+      if (population > splitPopulation) {
+        splitPopulation = population;
+        splitIdx = i;
+      }
+    }
+    if (splitIdx === -1) break;
+
+    const box = boxes[splitIdx];
+    let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+    for (const c of box) {
+      if (c.r < rMin) rMin = c.r;
+      if (c.r > rMax) rMax = c.r;
+      if (c.g < gMin) gMin = c.g;
+      if (c.g > gMax) gMax = c.g;
+      if (c.b < bMin) bMin = c.b;
+      if (c.b > bMax) bMax = c.b;
+    }
+    const rRange = rMax - rMin;
+    const gRange = gMax - gMin;
+    const bRange = bMax - bMin;
+
+    let channel: 'r' | 'g' | 'b' = 'r';
+    if (gRange >= rRange && gRange >= bRange) channel = 'g';
+    else if (bRange >= rRange && bRange >= gRange) channel = 'b';
+
+    box.sort((a, b) => a[channel] - b[channel]);
+
+    const totalCount = box.reduce((s, c) => s + c.count, 0);
+    let acc = 0;
+    let cut = 1;
+    for (let i = 0; i < box.length; i++) {
+      acc += box[i].count;
+      if (acc >= totalCount / 2) {
+        cut = i + 1;
+        break;
+      }
+    }
+    cut = Math.max(1, Math.min(box.length - 1, cut));
+
+    boxes.splice(splitIdx, 1, box.slice(0, cut), box.slice(cut));
+  }
+
+  return boxes;
+}
+
 function lzwEncode(
   pixels: Uint8Array,
   minCodeSize: number,
@@ -182,11 +271,17 @@ function lzwEncode(
   const dict = new Int32Array(4096 * 256);
   dict.fill(-1);
 
+  // GIF LZW requires the encoder to increase code size at the same point
+  // as the decoder. The encoder's table is one entry ahead of the decoder's,
+  // so we defer the code size bump by one emitCode call.
+  let pendingIncrease = false;
+
   const resetDict = () => {
     dict.fill(-1);
     codeSize = minCodeSize + 1;
     maxCode = (1 << codeSize) - 1;
     nextCode = eoiCode + 1;
+    pendingIncrease = false;
   };
 
   let curAccum = 0;
@@ -203,8 +298,14 @@ function lzwEncode(
         for (let i = 0; i < 255; i++) writeByte(subBlock[i]);
         subBlock.length = 0;
       }
-      curAccum >>= 8;
+      curAccum >>>= 8;
       curBits -= 8;
+    }
+    // Apply deferred code size increase after emitting the code
+    if (pendingIncrease) {
+      codeSize++;
+      maxCode = (1 << codeSize) - 1;
+      pendingIncrease = false;
     }
   };
 
@@ -233,8 +334,7 @@ function lzwEncode(
         dict[key] = nextCode;
         nextCode++;
         if (nextCode === maxCode + 1 && codeSize < 12) {
-          codeSize++;
-          maxCode = (1 << codeSize) - 1;
+          pendingIncrease = true;
         }
       }
       currentCode = pixel;
