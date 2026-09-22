@@ -33,12 +33,15 @@ export function createGif(
   // 2. Logical Screen Descriptor
   writeWord(width);
   writeWord(height);
-  // No Global Color Table here, we use local color tables per frame for better quality
-  writeByte(0x70); // 8 bits per pixel, no GCT
+  // Add a dummy Global Color Table (GCT) to fix compatibility with strict parsers
+  writeByte(0xf7); // 1 111 0 111 -> GCT present, 8bpp, 256 colors
   writeByte(0);    // Background color index
   writeByte(0);    // Pixel aspect ratio
 
-  // 3. Netscape 2.0 Application Extension (Looping)
+  // 3. Global Color Table (dummy black)
+  for (let i = 0; i < 256 * 3; i++) writeByte(0);
+
+  // 4. Netscape 2.0 Application Extension (Looping)
   writeByte(0x21); // Extension Introducer
   writeByte(0xff); // Application Extension Label
   writeByte(11);   // Block Size
@@ -48,12 +51,12 @@ export function createGif(
   writeWord(0);    // Repeat count (0 = infinite)
   writeByte(0);    // Block Terminator
 
-  // 4. Encode each frame
+  // 5. Encode each frame
   for (const canvas of canvases) {
     encodeFrame(canvas, delayHundredths, bytes, writeByte, writeWord, writeString);
   }
 
-  // 5. Trailer
+  // 6. Trailer
   writeByte(0x3b);
 
   return new Blob([new Uint8Array(bytes)], { type: 'image/gif' });
@@ -172,18 +175,19 @@ function lzwEncode(
   const eoiCode = clearCode + 1;
   let codeSize = minCodeSize + 1;
   let maxCode = (1 << codeSize) - 1;
+  let nextCode = eoiCode + 1;
 
-  const dict = new Map<string, number>();
+  // Use a fast Int32Array dictionary instead of Map<string, number>
+  // Keys are (currentCode << 8) | pixel
+  const dict = new Int32Array(4096 * 256);
+  dict.fill(-1);
+
   const resetDict = () => {
-    dict.clear();
-    for (let i = 0; i < clearCode; i++) {
-      dict.set(String(i), i);
-    }
+    dict.fill(-1);
     codeSize = minCodeSize + 1;
     maxCode = (1 << codeSize) - 1;
+    nextCode = eoiCode + 1;
   };
-
-  resetDict();
 
   let curAccum = 0;
   let curBits = 0;
@@ -194,9 +198,9 @@ function lzwEncode(
     curBits += codeSize;
     while (curBits >= 8) {
       subBlock.push(curAccum & 0xff);
-      if (subBlock.length === 254) {
-        writeByte(subBlock.length);
-        for (const b of subBlock) writeByte(b);
+      if (subBlock.length === 255) {
+        writeByte(255);
+        for (let i = 0; i < 255; i++) writeByte(subBlock[i]);
         subBlock.length = 0;
       }
       curAccum >>= 8;
@@ -206,31 +210,39 @@ function lzwEncode(
 
   emitCode(clearCode);
 
-  let currentPrefix = '';
+  let currentCode = -1;
   for (let i = 0; i < pixels.length; i++) {
     const pixel = pixels[i];
-    const newPrefix = currentPrefix === '' ? String(pixel) : currentPrefix + ',' + pixel;
+    if (currentCode === -1) {
+      currentCode = pixel;
+      continue;
+    }
 
-    if (dict.has(newPrefix)) {
-      currentPrefix = newPrefix;
+    const key = (currentCode << 8) | pixel;
+    const dictCode = dict[key];
+
+    if (dictCode !== -1) {
+      currentCode = dictCode;
     } else {
-      emitCode(dict.get(currentPrefix)!);
-      if (dict.size < 4096) {
-        dict.set(newPrefix, dict.size + 2);
-        if (dict.size + 2 > maxCode && codeSize < 12) {
+      emitCode(currentCode);
+      
+      if (nextCode === 4096) {
+        emitCode(clearCode);
+        resetDict();
+      } else {
+        dict[key] = nextCode;
+        nextCode++;
+        if (nextCode === maxCode + 1 && codeSize < 12) {
           codeSize++;
           maxCode = (1 << codeSize) - 1;
         }
-      } else {
-        emitCode(clearCode);
-        resetDict();
       }
-      currentPrefix = String(pixel);
+      currentCode = pixel;
     }
   }
 
-  if (currentPrefix !== '') {
-    emitCode(dict.get(currentPrefix)!);
+  if (currentCode !== -1) {
+    emitCode(currentCode);
   }
   emitCode(eoiCode);
 
@@ -239,6 +251,6 @@ function lzwEncode(
   }
   if (subBlock.length > 0) {
     writeByte(subBlock.length);
-    for (const b of subBlock) writeByte(b);
+    for (let i = 0; i < subBlock.length; i++) writeByte(subBlock[i]);
   }
 }

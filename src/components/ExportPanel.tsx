@@ -64,6 +64,31 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     }
   };
 
+  // 1b. Export Sprite Sheet WebP
+  const handleExportSpriteSheetWebP = async () => {
+    setIsExporting(true);
+    setExportMessage('Generating WebP sprite sheet...');
+    try {
+      const { canvas } = buildSpriteSheet(processedCanvases, {
+        columns,
+        padding,
+        baseName,
+        fps,
+      });
+
+      canvas.toBlob((blob) => {
+        if (blob) {
+          saveAs(blob, `${baseName}_sheet.webp`);
+        }
+        setIsExporting(false);
+      }, 'image/webp', 1.0);
+    } catch (err: any) {
+      alert('Error creating sprite sheet: ' + err.message);
+      setIsExporting(false);
+    }
+  };
+
+
   // 2. Export ZIP of PNGs
   const handleExportZip = async () => {
     setIsExporting(true);
@@ -221,18 +246,32 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
         {/* Right: Export Actions */}
         <div className="md:col-span-6 flex flex-col justify-between gap-3">
-          <button
-            onClick={handleExportSpriteSheet}
-            disabled={isExporting}
-            className="w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
-          >
-            {isExporting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Download className="w-4 h-4" />
-            )}
-            Download Sprite Sheet (.PNG)
-          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={handleExportSpriteSheet}
+              disabled={isExporting}
+              className="w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              Sheet (.PNG)
+            </button>
+            <button
+              onClick={handleExportSpriteSheetWebP}
+              disabled={isExporting}
+              className="w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+            >
+              {isExporting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              Sheet (.WEBP)
+            </button>
+          </div>
 
           <div className="grid grid-cols-3 gap-2">
             <button
