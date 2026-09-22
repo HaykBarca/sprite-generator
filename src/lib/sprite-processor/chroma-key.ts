@@ -30,36 +30,94 @@ export function applyChromaKeyToCanvas(
   const outerTol = tolerance + feather;
   const tolRange = outerTol - innerTol;
 
-  for (let i = 0; i < data.length; i += 4) {
-    const currentAlpha = data[i + 3];
-    if (currentAlpha === 0) continue;
+  const width = outputCanvas.width;
+  const height = outputCanvas.height;
 
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
+  // 1. Calculate distance for all pixels and identify border seeds
+  const distances = new Float32Array(width * height);
+  const reachable = new Uint8Array(width * height);
+  const queue: number[] = [];
 
-    const dist = colorDistance(r, g, b, target.r, target.g, target.b);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const dist = colorDistance(r, g, b, target.r, target.g, target.b);
+      distances[y * width + x] = dist;
 
-    if (dist <= innerTol) {
-      // Completely within tolerance -> fully transparent
-      data[i + 3] = 0;
-    } else if (dist < outerTol && tolRange > 0) {
-      // Soft falloff / feather range
-      const ratio = (dist - innerTol) / tolRange;
-      data[i + 3] = Math.round(currentAlpha * ratio);
+      // Add to queue if it's on the border and matches our loose tolerance
+      if ((x === 0 || x === width - 1 || y === 0 || y === height - 1) && dist <= outerTol + 40) {
+        queue.push(y * width + x);
+        reachable[y * width + x] = 1;
+      }
+    }
+  }
 
-      if (settings.despill) {
-        const cleaned = despillPixel(r, g, b, target, 0.7);
+  // 2. Flood fill (BFS)
+  let head = 0;
+  const neighbors = [-1, 1, -width, width];
+  while (head < queue.length) {
+    const idx = queue[head++];
+    const x = idx % width;
+    const y = Math.floor(idx / width);
+
+    for (const offset of neighbors) {
+      const nIdx = idx + offset;
+      // Bounds check
+      if (
+        nIdx >= 0 &&
+        nIdx < width * height &&
+        reachable[nIdx] === 0 &&
+        distances[nIdx] <= outerTol + 40
+      ) {
+        // Prevent wrapping around the edges
+        const nx = nIdx % width;
+        if (Math.abs(nx - x) > 1) continue; 
+
+        reachable[nIdx] = 1;
+        queue.push(nIdx);
+      }
+    }
+  }
+
+  // 3. Apply chroma key only to reachable pixels
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (reachable[idx] === 0) continue;
+
+      const i = idx * 4;
+      const currentAlpha = data[i + 3];
+      if (currentAlpha === 0) continue;
+
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const dist = distances[idx];
+
+      if (dist <= innerTol) {
+        // Completely within tolerance -> fully transparent
+        data[i + 3] = 0;
+      } else if (dist < outerTol && tolRange > 0) {
+        // Soft falloff / feather range
+        const ratio = (dist - innerTol) / tolRange;
+        data[i + 3] = Math.round(currentAlpha * ratio);
+
+        if (settings.despill) {
+          const cleaned = despillPixel(r, g, b, target, 0.7);
+          data[i] = cleaned.r;
+          data[i + 1] = cleaned.g;
+          data[i + 2] = cleaned.b;
+        }
+      } else if (settings.despill && dist < outerTol + 40) {
+        // Close to edge -> despill color bounce
+        const cleaned = despillPixel(r, g, b, target, 0.5);
         data[i] = cleaned.r;
         data[i + 1] = cleaned.g;
         data[i + 2] = cleaned.b;
       }
-    } else if (settings.despill && dist < outerTol + 40) {
-      // Close to edge -> despill color bounce
-      const cleaned = despillPixel(r, g, b, target, 0.5);
-      data[i] = cleaned.r;
-      data[i + 1] = cleaned.g;
-      data[i + 2] = cleaned.b;
     }
   }
 
