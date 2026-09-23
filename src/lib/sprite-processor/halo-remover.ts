@@ -106,7 +106,7 @@ export function applyHaloRemoverToCanvas(
   const outputCanvas = document.createElement('canvas');
   outputCanvas.width = sourceCanvas.width;
   outputCanvas.height = sourceCanvas.height;
-  const ctx = outputCanvas.getContext('2d');
+  const ctx = outputCanvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return outputCanvas;
 
   ctx.drawImage(sourceCanvas, 0, 0);
@@ -192,22 +192,20 @@ function applyPixelPerfectOnly(ctx: CanvasRenderingContext2D, width: number, hei
 }
 
 function cleanIsolatedPixels(data: Uint8ClampedArray, width: number, height: number) {
+  // Byte offsets of the 8 neighbours' alpha channel relative to the pixel's alpha
+  const row = width * 4;
+  const neighborOffsets = [-row - 4, -row, -row + 4, -4, 4, row - 4, row, row + 4];
+
   for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
-      const idx = (y * width + x) * 4;
-      if (data[idx + 3] > 0) {
+      const a = (y * width + x) * 4 + 3;
+      if (data[a] > 0) {
         let opaqueNeighbors = 0;
-        const neighbors = [
-          [-1, -1], [0, -1], [1, -1],
-          [-1, 0],           [1, 0],
-          [-1, 1],  [0, 1],  [1, 1],
-        ];
-        for (const [dx, dy] of neighbors) {
-          const nIdx = ((y + dy) * width + (x + dx)) * 4;
-          if (data[nIdx + 3] === 255) opaqueNeighbors++;
+        for (let k = 0; k < 8; k++) {
+          if (data[a + neighborOffsets[k]] === 255) opaqueNeighbors++;
         }
         if (opaqueNeighbors < 2) {
-          data[idx + 3] = 0;
+          data[a] = 0;
         }
       }
     }

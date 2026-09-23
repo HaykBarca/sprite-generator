@@ -17,6 +17,7 @@ const PRESETS: Array<{ id: CropSettings['preset']; label: string }> = [
   { id: '64x64', label: '64 × 64' },
   { id: '128x128', label: '128 × 128' },
   { id: '256x256', label: '256 × 256' },
+  { id: '512x512', label: '512 × 512' },
   { id: 'custom', label: 'Custom' },
 ];
 

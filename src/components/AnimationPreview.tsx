@@ -1,25 +1,30 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Pause, ChevronLeft, ChevronRight, ZoomIn, Grid, Sparkles, Layers } from 'lucide-react';
+import { Play, Pause, ChevronLeft, ChevronRight, ZoomIn, Grid, Sparkles, Loader2 } from 'lucide-react';
+import { ZoomViewport } from './ZoomViewport';
 
 interface AnimationPreviewProps {
   frames: HTMLCanvasElement[];
   fps: number;
   onFpsChange: (fps: number) => void;
   selectedCount: number;
+  isProcessing?: boolean;
 }
+
+const ZOOM_LEVELS = [1, 2, 3, 4];
 
 export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
   frames,
   fps,
   onFpsChange,
   selectedCount,
+  isProcessing = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [currentFrameIdx, setCurrentFrameIdx] = useState<number>(0);
-  const [zoom, setZoom] = useState<number>(2);
+  const [zoom, setZoom] = useState<number>(1); // 1 = fit whole frame
   const [bgStyle, setBgStyle] = useState<'checker' | 'dark' | 'light' | 'green' | 'magenta'>('checker');
   const [showGuides, setShowGuides] = useState<boolean>(true);
 
@@ -51,44 +56,24 @@ export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
     const frame = frames[currentFrameIdx % frames.length];
     if (!frame) return;
 
-    canvas.width = frame.width;
-    canvas.height = frame.height;
+    // Resizing a canvas reallocates it, so only do it when the size changes
+    if (canvas.width !== frame.width) canvas.width = frame.width;
+    if (canvas.height !== frame.height) canvas.height = frame.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = false; // crisp pixel-art preview
     ctx.drawImage(frame, 0, 0);
-
-    // Draw baseline and center guides if enabled
-    if (showGuides) {
-      ctx.strokeStyle = 'rgba(99, 102, 241, 0.4)'; // Indigo guide
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-
-      // Center Vertical
-      ctx.beginPath();
-      ctx.moveTo(canvas.width / 2, 0);
-      ctx.lineTo(canvas.width / 2, canvas.height);
-      ctx.stroke();
-
-      // Baseline (bottom 10%)
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; // Red ground line
-      ctx.beginPath();
-      ctx.moveTo(0, canvas.height * 0.9);
-      ctx.lineTo(canvas.width, canvas.height * 0.9);
-      ctx.stroke();
-
-      ctx.setLineDash([]);
-    }
-  }, [frames, currentFrameIdx, showGuides]);
+  }, [frames, currentFrameIdx]);
 
   const stepBackward = () => {
+    if (frames.length === 0) return;
     setIsPlaying(false);
     setCurrentFrameIdx((prev) => (prev === 0 ? frames.length - 1 : prev - 1));
   };
 
   const stepForward = () => {
+    if (frames.length === 0) return;
     setIsPlaying(false);
     setCurrentFrameIdx((prev) => (prev + 1) % frames.length);
   };
@@ -101,7 +86,10 @@ export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
     magenta: 'bg-[#FF00FF]',
   };
 
-  if (frames.length === 0) return null;
+  // Keep the panel mounted while the first batch of frames is being processed
+  if (frames.length === 0 && !isProcessing) return null;
+
+  const activeFrame = frames.length > 0 ? frames[currentFrameIdx % frames.length] : undefined;
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-6 backdrop-blur shadow-xl space-y-4">
@@ -117,26 +105,39 @@ export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {isProcessing && (
+            <span className="text-xs text-indigo-300 flex items-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Updating…
+            </span>
+          )}
           <span className="text-xs font-mono text-slate-400">
-            Frame <strong className="text-indigo-400">{currentFrameIdx + 1}</strong> / {frames.length}
+            Frame <strong className="text-indigo-400">{frames.length > 0 ? currentFrameIdx + 1 : 0}</strong> / {frames.length}
           </span>
         </div>
       </div>
 
-      {/* Main Canvas Display */}
-      <div className="relative w-full h-64 sm:h-72 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center p-4">
-        {/* Background container */}
-        <div className={`absolute inset-0 ${bgClasses[bgStyle]} transition-colors`} />
-
-        {/* Scaled Crisp Canvas */}
-        <div
-          className="relative z-10 flex items-center justify-center transition-transform"
-          style={{ transform: `scale(${zoom})` }}
-        >
-          <canvas ref={canvasRef} className="pixelated shadow-2xl max-w-full max-h-full object-contain" />
-        </div>
-
+      {/* Main Canvas Display: 1x fits the whole frame, higher zoom levels drag to pan */}
+      <ZoomViewport
+        canvasRef={canvasRef}
+        contentWidth={activeFrame?.width ?? 0}
+        contentHeight={activeFrame?.height ?? 0}
+        zoom={zoom}
+        className="w-full h-72 sm:h-96 rounded-xl border border-slate-800"
+        backgroundClassName={`${bgClasses[bgStyle]} transition-colors`}
+        canvasClassName="shadow-2xl"
+        canvasOverlay={
+          showGuides && (
+            <div className="absolute inset-0 pointer-events-none">
+              {/* Center vertical */}
+              <div className="absolute top-0 bottom-0 left-1/2 border-l border-dashed border-indigo-500/60" />
+              {/* Baseline (bottom 10%) */}
+              <div className="absolute left-0 right-0 top-[90%] border-t border-dashed border-red-500/70" />
+            </div>
+          )
+        }
+      >
         {/* Top-Right Background and Guide Toggles */}
         <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-slate-900/90 border border-slate-800/90 rounded-lg p-1 shadow-lg backdrop-blur">
           <button
@@ -180,7 +181,7 @@ export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
             <Grid className="w-3.5 h-3.5" />
           </button>
         </div>
-      </div>
+      </ZoomViewport>
 
       {/* Playback Controls & Settings Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
@@ -256,7 +257,7 @@ export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
           <ZoomIn className="w-3.5 h-3.5 text-slate-400" />
           <span className="text-xs text-slate-400">Zoom:</span>
           <div className="flex items-center gap-1">
-            {[1, 2, 3, 4].map((z) => (
+            {ZOOM_LEVELS.map((z) => (
               <button
                 key={z}
                 onClick={() => setZoom(z)}
@@ -264,7 +265,7 @@ export const AnimationPreview: React.FC<AnimationPreviewProps> = ({
                   zoom === z ? 'bg-purple-600 text-white font-bold' : 'bg-slate-800 text-slate-300'
                 }`}
               >
-                {z}x
+                {z === 1 ? 'Fit' : `${z}x`}
               </button>
             ))}
           </div>

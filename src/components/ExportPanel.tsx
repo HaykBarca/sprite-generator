@@ -11,12 +11,15 @@ interface ExportPanelProps {
   processedCanvases: HTMLCanvasElement[];
   sourceName: string;
   fps: number;
+  /** True while settings changes are still being applied to the frames */
+  isProcessing?: boolean;
 }
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
   processedCanvases,
   sourceName,
   fps,
+  isProcessing = false,
 }) => {
   const [baseName, setBaseName] = useState<string>(sourceName || 'character');
   const [columns, setColumns] = useState<number>(0); // 0 = auto
@@ -249,8 +252,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleExportSpriteSheet}
-              disabled={isExporting}
-              className="w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+              disabled={isExporting || isProcessing}
+              className="disabled:opacity-50 disabled:cursor-not-allowed w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
             >
               {isExporting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -261,8 +264,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             </button>
             <button
               onClick={handleExportSpriteSheetWebP}
-              disabled={isExporting}
-              className="w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
+              disabled={isExporting || isProcessing}
+              className="disabled:opacity-50 disabled:cursor-not-allowed w-full py-3 px-4 rounded-xl font-medium text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2"
             >
               {isExporting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -276,8 +279,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <div className="grid grid-cols-3 gap-2">
             <button
               onClick={handleExportZip}
-              disabled={isExporting}
-              className="py-2.5 px-3 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5"
+              disabled={isExporting || isProcessing}
+              className="disabled:opacity-50 disabled:cursor-not-allowed py-2.5 px-3 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5"
               title="Download all frames as separate PNG files in a ZIP archive"
             >
               <Archive className="w-4 h-4 text-amber-400" />
@@ -286,8 +289,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
             <button
               onClick={handleExportGif}
-              disabled={isExporting}
-              className="py-2.5 px-3 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5"
+              disabled={isExporting || isProcessing}
+              className="disabled:opacity-50 disabled:cursor-not-allowed py-2.5 px-3 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5"
               title="Download animated GIF loop"
             >
               <Film className="w-4 h-4 text-purple-400" />
@@ -296,14 +299,21 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
             <button
               onClick={handleExportJson}
-              disabled={isExporting}
-              className="py-2.5 px-3 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5"
+              disabled={isExporting || isProcessing}
+              className="disabled:opacity-50 disabled:cursor-not-allowed py-2.5 px-3 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5"
               title="Export Godot/Unity JSON atlas metadata"
             >
               <FileCode className="w-4 h-4 text-cyan-400" />
               Atlas (.JSON)
             </button>
           </div>
+
+          {isProcessing && !isExporting && (
+            <div className="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Applying latest settings…
+            </div>
+          )}
 
           {isExporting && (
             <div className="text-center text-xs text-indigo-400 font-medium animate-pulse flex items-center justify-center gap-1.5">

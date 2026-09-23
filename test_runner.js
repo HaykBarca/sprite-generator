@@ -146,8 +146,8 @@ async function runLiveTests() {
       });
     }
 
-    // Toggle 1.5x edge zoom
-    const zoomEdgeBtn = await page.waitForSelector('button ::-p-text(1.5x Edge Zoom)');
+    // Set 5x edge zoom
+    const zoomEdgeBtn = await page.waitForSelector('button ::-p-text(5x)');
     await zoomEdgeBtn.click();
     await new Promise((r) => setTimeout(r, 400));
 

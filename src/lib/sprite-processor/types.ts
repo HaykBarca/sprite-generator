@@ -24,7 +24,7 @@ export type AlignY = 'top' | 'center' | 'bottom';
 export interface CropSettings {
   enabled: boolean;
   mode: CropMode;
-  preset: 'original' | '32x32' | '48x48' | '64x64' | '128x128' | '256x256' | 'custom';
+  preset: 'original' | '32x32' | '48x48' | '64x64' | '128x128' | '256x256' | '512x512' | 'custom';
   customWidth: number;
   customHeight: number;
   reductionPadding: number; // in pixels
