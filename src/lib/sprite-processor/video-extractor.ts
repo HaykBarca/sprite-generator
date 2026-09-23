@@ -1,5 +1,24 @@
 import { ExtractedFrame, VideoInfo } from './types';
 
+const THUMBNAIL_MAX_SIZE = 192;
+
+/**
+ * Encodes a small preview image for the frame grid. Encoding full-resolution
+ * frames is slow and holds a lot of memory for images shown at ~100px.
+ */
+function createThumbnailUrl(source: HTMLCanvasElement, type: 'image/jpeg' | 'image/png'): string {
+  const scale = Math.min(1, THUMBNAIL_MAX_SIZE / Math.max(source.width, source.height));
+  const thumb = document.createElement('canvas');
+  thumb.width = Math.max(1, Math.round(source.width * scale));
+  thumb.height = Math.max(1, Math.round(source.height * scale));
+  const ctx = thumb.getContext('2d');
+  if (ctx) {
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source, 0, 0, thumb.width, thumb.height);
+  }
+  return thumb.toDataURL(type, 0.85);
+}
+
 /**
  * Loads video element and extracts metadata
  */
@@ -50,12 +69,6 @@ export async function extractVideoFrames(
   const frames: ExtractedFrame[] = [];
   const totalFramesToExtract = Math.max(1, Math.floor((endFrame - startFrame) / interval));
 
-  const offscreen = document.createElement('canvas');
-  offscreen.width = video.videoWidth;
-  offscreen.height = video.videoHeight;
-  const ctx = offscreen.getContext('2d');
-  if (!ctx) throw new Error('Could not create offscreen canvas context');
-
   let extractedCount = 0;
 
   for (let f = startFrame; f <= endFrame; f += interval) {
@@ -75,12 +88,11 @@ export async function extractVideoFrames(
     const frameCanvas = document.createElement('canvas');
     frameCanvas.width = video.videoWidth;
     frameCanvas.height = video.videoHeight;
-    const frameCtx = frameCanvas.getContext('2d');
-    if (frameCtx) {
-      frameCtx.drawImage(video, 0, 0);
-    }
+    const frameCtx = frameCanvas.getContext('2d', { willReadFrequently: true });
+    if (!frameCtx) throw new Error('Could not create frame canvas context');
+    frameCtx.drawImage(video, 0, 0);
 
-    const thumbUrl = frameCanvas.toDataURL('image/jpeg', 0.85);
+    const thumbUrl = createThumbnailUrl(frameCanvas, 'image/jpeg');
 
     frames.push({
       id: `frame_${f}_${Date.now()}`,
@@ -131,7 +143,7 @@ export async function loadImagesAsFrames(
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth || img.width;
     canvas.height = img.naturalHeight || img.height;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (ctx) {
       ctx.drawImage(img, 0, 0);
     }
@@ -142,7 +154,7 @@ export async function loadImagesAsFrames(
       frameIndex: i,
       time: i / 12,
       canvas,
-      thumbnailUrl: canvas.toDataURL('image/png'),
+      thumbnailUrl: createThumbnailUrl(canvas, 'image/png'),
       selected: true,
       width: canvas.width,
       height: canvas.height,

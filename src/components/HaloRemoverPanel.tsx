@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
-import { Sparkles, Wand2, Eye, ShieldAlert, Check } from 'lucide-react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
+import { Eye, ZoomIn } from 'lucide-react';
 import { HaloRemoverSettings } from '../lib/sprite-processor/types';
-import { applyHaloRemoverToCanvas } from '../lib/sprite-processor/halo-remover';
+import { getCachedBounds, getHaloRemovedCanvas } from '../lib/sprite-processor/pipeline';
+import { ZoomViewport } from './ZoomViewport';
 
 interface HaloRemoverPanelProps {
   settings: HaloRemoverSettings;
@@ -11,6 +12,9 @@ interface HaloRemoverPanelProps {
   previewCanvas: HTMLCanvasElement | null;
   chromaColorHex?: string;
 }
+
+const EDGE_ZOOM_PRESETS = [1, 2, 3, 5, 8];
+const MAX_EDGE_ZOOM = 10;
 
 export const HaloRemoverPanel: React.FC<HaloRemoverPanelProps> = ({
   settings,
@@ -20,25 +24,36 @@ export const HaloRemoverPanel: React.FC<HaloRemoverPanelProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showBefore, setShowBefore] = useState<boolean>(false);
-  const [zoomEdge, setZoomEdge] = useState<boolean>(false);
+  const [edgeZoom, setEdgeZoom] = useState<number>(1); // 1 = whole frame fits
+
+  // Zooming centres on the subject rather than the (often empty) frame centre.
+  // Rounded so small tolerance tweaks don't yank the view after the user pans.
+  const subjectCenter = useMemo(() => {
+    if (!previewCanvas) return undefined;
+    const b = getCachedBounds(previewCanvas);
+    const round = (v: number) => Math.round(v * 50) / 50;
+    return {
+      x: round((b.minX + b.width / 2) / previewCanvas.width),
+      y: round((b.minY + b.height / 2) / previewCanvas.height),
+    };
+  }, [previewCanvas]);
 
   useEffect(() => {
     if (!canvasRef.current || !previewCanvas) return;
     const canvas = canvasRef.current;
-    canvas.width = previewCanvas.width;
-    canvas.height = previewCanvas.height;
+    if (canvas.width !== previewCanvas.width) canvas.width = previewCanvas.width;
+    if (canvas.height !== previewCanvas.height) canvas.height = previewCanvas.height;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (showBefore || !settings.enabled) {
-      ctx.drawImage(previewCanvas, 0, 0);
-    } else {
-      const processed = applyHaloRemoverToCanvas(previewCanvas, settings, chromaColorHex);
-      ctx.drawImage(processed, 0, 0);
-    }
+    // Cached: shares work with the animation pipeline for the same frame & settings
+    const source = showBefore
+      ? previewCanvas
+      : getHaloRemovedCanvas(previewCanvas, settings, chromaColorHex);
+    ctx.drawImage(source, 0, 0);
   }, [previewCanvas, settings, chromaColorHex, showBefore]);
 
   return (
@@ -145,38 +160,66 @@ export const HaloRemoverPanel: React.FC<HaloRemoverPanelProps> = ({
 
         {/* Zoomed Edge Preview */}
         <div className="lg:col-span-5 flex flex-col items-center justify-center">
-          <div
-            className={`w-full aspect-square max-h-56 rounded-xl overflow-hidden border border-slate-800 relative bg-transparency-grid flex items-center justify-center`}
-          >
-            <div
-              className={`w-full h-full flex items-center justify-center transition-transform ${
-                zoomEdge ? 'scale-150' : 'scale-100'
-              }`}
-            >
-              <canvas ref={canvasRef} className="w-full h-full object-contain pixelated" />
+          <ZoomViewport
+            canvasRef={canvasRef}
+            contentWidth={previewCanvas?.width ?? 0}
+            contentHeight={previewCanvas?.height ?? 0}
+            zoom={edgeZoom}
+            focusX={subjectCenter?.x}
+            focusY={subjectCenter?.y}
+            padding={8}
+            className="w-full h-56 rounded-xl border border-slate-800"
+          />
+
+          {/* Edge zoom: presets + fine slider. Drag the preview to pan when zoomed. */}
+          <div className="w-full mt-2 px-1 space-y-1.5 text-[11px]">
+            <div className="flex items-center gap-2">
+              <ZoomIn className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="text-slate-400 shrink-0">Edge Zoom</span>
+              <input
+                type="range"
+                min={1}
+                max={MAX_EDGE_ZOOM}
+                step={0.5}
+                value={edgeZoom}
+                onChange={(e) => setEdgeZoom(parseFloat(e.target.value))}
+                className="flex-1 min-w-0 accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                aria-label="Edge zoom"
+              />
+              <span className="text-indigo-400 font-mono font-semibold w-10 text-right shrink-0">
+                {edgeZoom}x
+              </span>
             </div>
-          </div>
 
-          {/* Preview helpers */}
-          <div className="w-full flex items-center justify-between mt-2 px-1 text-[11px]">
-            <button
-              type="button"
-              onClick={() => setZoomEdge(!zoomEdge)}
-              className="text-slate-400 hover:text-slate-200 transition-colors"
-            >
-              {zoomEdge ? 'Reset Zoom' : '🔍 1.5x Edge Zoom'}
-            </button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                {EDGE_ZOOM_PRESETS.map((z) => (
+                  <button
+                    key={z}
+                    type="button"
+                    onClick={() => setEdgeZoom(z)}
+                    className={`px-1.5 py-0.5 rounded font-mono transition-colors ${
+                      edgeZoom === z
+                        ? 'bg-purple-600 text-white font-bold'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    {z === 1 ? 'Fit' : `${z}x`}
+                  </button>
+                ))}
+              </div>
 
-            <button
-              type="button"
-              onMouseDown={() => setShowBefore(true)}
-              onMouseUp={() => setShowBefore(false)}
-              onMouseLeave={() => setShowBefore(false)}
-              className="text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1"
-            >
-              <Eye className="w-3 h-3" />
-              Hold to see Before
-            </button>
+              <button
+                type="button"
+                onMouseDown={() => setShowBefore(true)}
+                onMouseUp={() => setShowBefore(false)}
+                onMouseLeave={() => setShowBefore(false)}
+                className="text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1"
+              >
+                <Eye className="w-3 h-3" />
+                Hold to see Before
+              </button>
+            </div>
           </div>
         </div>
       </div>

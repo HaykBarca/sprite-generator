@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Pipette, Palette, Eye, RotateCcw, Check, Sparkles } from 'lucide-react';
 import { ChromaKeySettings } from '../lib/sprite-processor/types';
-import { applyChromaKeyToCanvas } from '../lib/sprite-processor/chroma-key';
+import { getChromaKeyedCanvas } from '../lib/sprite-processor/pipeline';
 
 interface ChromaKeyPanelProps {
   settings: ChromaKeySettings;
@@ -32,20 +32,17 @@ export const ChromaKeyPanel: React.FC<ChromaKeyPanelProps> = ({
   useEffect(() => {
     if (!canvasRef.current || !previewCanvas) return;
     const canvas = canvasRef.current;
-    canvas.width = previewCanvas.width;
-    canvas.height = previewCanvas.height;
+    if (canvas.width !== previewCanvas.width) canvas.width = previewCanvas.width;
+    if (canvas.height !== previewCanvas.height) canvas.height = previewCanvas.height;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (showOriginal || !settings.enabled) {
-      ctx.drawImage(previewCanvas, 0, 0);
-    } else {
-      const processed = applyChromaKeyToCanvas(previewCanvas, settings);
-      ctx.drawImage(processed, 0, 0);
-    }
+    // Cached: shares work with the animation pipeline for the same frame & settings
+    const source = showOriginal ? previewCanvas : getChromaKeyedCanvas(previewCanvas, settings);
+    ctx.drawImage(source, 0, 0);
   }, [previewCanvas, settings, showOriginal]);
 
   // Eyedropper click handler on canvas

@@ -25,7 +25,7 @@ export function getNonTransparentBounds(
   canvas: HTMLCanvasElement,
   alphaThreshold: number = 10
 ): BoundingBox {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) {
     return {
       minX: 0,

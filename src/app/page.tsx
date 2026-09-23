@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Header } from '../components/Header';
 import { VideoUploadSection } from '../components/VideoUploadSection';
 import { FrameSelectorGrid } from '../components/FrameSelectorGrid';
@@ -16,11 +16,15 @@ import {
   HaloRemoverSettings,
 } from '../lib/sprite-processor/types';
 import {
-  processStage1And3,
+  getChromaKeyedCanvas,
   processFramesPipeline,
+  PipelineResult,
 } from '../lib/sprite-processor/pipeline';
 import { generateSampleDemoFrames } from '../lib/sprite-processor/sample-asset';
-import { getUnionBounds } from '../lib/sprite-processor/auto-crop';
+
+// Wait for slider drags to settle before reprocessing every selected frame
+const PIPELINE_DEBOUNCE_MS = 150;
+const EMPTY_CANVASES: HTMLCanvasElement[] = [];
 
 export default function Home() {
   const [frames, setFrames] = useState<ExtractedFrame[]>([]);
@@ -28,6 +32,8 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [fps, setFps] = useState<number>(12);
   const [previewFrameIndex, setPreviewFrameIndex] = useState<number>(0);
+  const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
   // Step 1: Chroma Key Settings
   const [chromaKeySettings, setChromaKeySettings] = useState<ChromaKeySettings>({
@@ -62,6 +68,7 @@ export default function Home() {
   const handleLoadDemo = useCallback(() => {
     const demo = generateSampleDemoFrames();
     setFrames(demo);
+    setPipelineResult(null);
     setSourceName('knight_walk');
     setPreviewFrameIndex(0);
     setFps(12);
@@ -93,6 +100,7 @@ export default function Home() {
   // Reset
   const handleReset = useCallback(() => {
     setFrames([]);
+    setPipelineResult(null);
     setSourceName('character');
     setPreviewFrameIndex(0);
   }, []);
@@ -120,6 +128,7 @@ export default function Home() {
   const handleFramesExtracted = useCallback(
     (newFrames: ExtractedFrame[], name: string) => {
       setFrames(newFrames);
+      setPipelineResult(null);
       setSourceName(name);
       setPreviewFrameIndex(0);
     },
@@ -138,39 +147,54 @@ export default function Home() {
     return frames[idx]?.canvas || null;
   }, [frames, previewFrameIndex]);
 
-  // Inspected frame with chroma key applied (feeds into Halo Remover preview)
+  // Inspected frame with chroma key applied (feeds into Halo Remover preview).
+  // Cached per frame, so the Chroma Key panel and the pipeline reuse this work.
   const chromaProcessedInspectedCanvas = useMemo(() => {
     if (!inspectedCanvas) return null;
-    return processStage1And3(inspectedCanvas, chromaKeySettings, {
-      enabled: false,
-      expandPixels: 0,
-      pixelPerfect: false,
-      despillStrength: 0,
-    });
+    return getChromaKeyedCanvas(inspectedCanvas, chromaKeySettings);
   }, [inspectedCanvas, chromaKeySettings]);
 
-  // Fully processed canvases for Animation Preview & Export
-  const fullyProcessedCanvases = useMemo(() => {
-    if (selectedFrames.length === 0) return [];
-    return processFramesPipeline(
-      selectedFrames.map((f) => f.canvas),
-      {
-        chromaKey: chromaKeySettings,
-        haloRemover: haloSettings,
-        crop: cropSettings,
-      }
-    );
+  // Fully processed canvases for Animation Preview & Export. Runs debounced and
+  // time-sliced outside of render so sliders stay responsive on large videos;
+  // a newer run cancels any run still in progress.
+  useEffect(() => {
+    if (selectedFrames.length === 0) {
+      setPipelineResult(null);
+      setIsProcessing(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsProcessing(true);
+    const timer = setTimeout(async () => {
+      const result = await processFramesPipeline(
+        selectedFrames.map((f) => f.canvas),
+        {
+          chromaKey: chromaKeySettings,
+          haloRemover: haloSettings,
+          crop: cropSettings,
+        },
+        () => cancelled
+      );
+      if (cancelled) return;
+      setPipelineResult(result);
+      setIsProcessing(false);
+    }, PIPELINE_DEBOUNCE_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [selectedFrames, chromaKeySettings, haloSettings, cropSettings]);
+
+  const fullyProcessedCanvases = pipelineResult?.canvases ?? EMPTY_CANVASES;
 
   // Detected Union Bounds summary text
   const detectedBoundsText = useMemo(() => {
-    if (selectedFrames.length === 0) return undefined;
-    const stage1Canvases = selectedFrames.map((f) =>
-      processStage1And3(f.canvas, chromaKeySettings, haloSettings)
-    );
-    const b = getUnionBounds(stage1Canvases);
+    if (!pipelineResult) return undefined;
+    const b = pipelineResult.unionBounds;
     return `${b.width} × ${b.height} px (minX:${b.minX}, minY:${b.minY})`;
-  }, [selectedFrames, chromaKeySettings, haloSettings]);
+  }, [pipelineResult]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
@@ -212,6 +236,7 @@ export default function Home() {
                 fps={fps}
                 onFpsChange={setFps}
                 selectedCount={selectedFrames.length}
+                isProcessing={isProcessing}
               />
             </section>
 
@@ -253,6 +278,7 @@ export default function Home() {
                 processedCanvases={fullyProcessedCanvases}
                 sourceName={sourceName}
                 fps={fps}
+                isProcessing={isProcessing}
               />
             </section>
           </>
